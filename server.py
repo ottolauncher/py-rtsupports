@@ -14,8 +14,8 @@ from api import schema
 import settings
 from db import init
 from models.channels import load_channels, load_channels_by_message
-from models.messages import load_messages_by_channel
-from models.users import load_users
+from models.messages import load_messages_by_channel, load_get_message
+from models.users import load_users, load_users_by_message
 from utils.wrapper import run_once
 
 
@@ -27,6 +27,8 @@ class MyGraphQL(GraphQL):
             'channel_loader': DataLoader(load_fn=load_channels),
             'messages_by_channel': DataLoader(load_fn=load_messages_by_channel),
             'channels_by_message': DataLoader(load_fn=load_channels_by_message),
+            'users_by_message': DataLoader(load_fn=load_users_by_message),
+            'message_loader': DataLoader(load_fn=load_get_message)
         }
 
 

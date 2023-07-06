@@ -9,7 +9,7 @@ from strawberry.scalars import JSON
 from strawberry.types import Info
 from typing_extensions import AsyncGenerator
 
-from db import get_connection, userTbl
+from db import get_connection, userTbl, messageTbl
 from utils.wrapper import json_serial
 
 
@@ -43,6 +43,17 @@ async def load_users(keys: List[strawberry.ID]) -> List[Union[UserType, ValueErr
 
     return [await lookup(key) for key in keys]
 
+
+async def load_users_by_message(keys: List[strawberry.ID]) -> List[Union[UserType, ValueError]]:
+    conn = await get_connection()
+    res = await r.table(messageTbl).filter(
+        lambda doc: r.expr(keys).contains(doc['user_id'])
+    ).run(conn)
+    users: List[UserType] = []
+    while (await res.fetch_next()):
+        usr = await res.next()
+        users.append(make_user(usr))
+    return users
 
 @strawberry.type
 class UserMutation:

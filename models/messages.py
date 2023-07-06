@@ -8,16 +8,16 @@ from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
 from strawberry.field_extensions import InputMutationExtension
 from strawberry.scalars import JSON
 from strawberry.types import Info
-from typing_extensions import AsyncGenerator, Annotated, TYPE_CHECKING
+from typing_extensions import AsyncGenerator, Annotated, TYPE_CHECKING, Union
 
 from db import get_connection, messageTbl, userTbl, channelTbl
 from models.channels import ChannelType, make_channel
 from models.users import UserType, make_user
 from utils.wrapper import json_serial
 
-
 if TYPE_CHECKING:
     from .channels import ChannelType
+    from .users import UserType
 
 
 @strawberry.type
@@ -36,8 +36,14 @@ class MessageType:
     id: Optional[str] = None
 
     @strawberry.field
-    async def channels(self, info: Info, keys: List[strawberry.ID]) -> List[Annotated["ChannelType", strawberry.lazy(".channels")]]:
+    async def channels(self, info: Info, keys: List[strawberry.ID]) -> List[
+        Annotated["ChannelType", strawberry.lazy(".channels")]]:
         return await info.context['channels_by_message'].load(keys)
+
+    @strawberry.field
+    async def users(self, info: Info, keys: List[strawberry.ID]) -> List[
+        Annotated["UserType", strawberry.lazy(".users")]]:
+        return await info.context['users_by_message'].loads(keys)
 
 
 async def make_message(cur) -> MessageType:
@@ -57,6 +63,22 @@ async def make_message(cur) -> MessageType:
             channels=channels,
             users=users
         )
+
+
+async def load_get_message(self, filter: JSON) -> Union[MessageType, ValueError]:
+    conn = await get_connection()
+    res = await r.table(messageTbl).filter(filter).limit(1).run(conn)
+    message: MessageType = None
+    while (await res.fetch_next()):
+        msg = await res.next()
+        message = MessageType(
+            id=msg.get('id'),
+            text=msg.get('text'),
+            created_at=msg.get('created_at'),
+            user_id=msg.get('user_id'),
+            channel_id=msg.get('channel_id'),
+        )
+    return await message
 
 
 async def load_messages_by_channel(keys: List[strawberry.ID]) -> List[MessageType]:
@@ -145,12 +167,8 @@ class MessageMutation:
 @strawberry.type
 class MessageQuery:
     @strawberry.field
-    async def get_message(self, filter: JSON) -> MessageType:
-        conn = await get_connection()
-        res = await r.table(messageTbl).filter(filter).merge(
-            lambda msg: sync_prefetch_related(msg)
-        ).run(conn)
-        return await make_message(res)
+    async def get_message(self, info: Info, filter: JSON) -> MessageType:
+       return await info.context['message_loader'].load(filter)
 
     @strawberry.field
     async def all_messages(self, info: Info, filter: Optional[JSON] = None, page: Optional[int] = None,
@@ -176,6 +194,7 @@ class MessageQuery:
                 user_id=item.get('user_id'),
                 channel_id=item.get('channel_id'),
             )
+
             messages.append(msg)
         return messages
 
