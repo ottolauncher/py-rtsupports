@@ -3,7 +3,7 @@ The application has been implemented by following the Udemy course  by  [Build R
 but this using [Strawberry-GraphQL](https://strawberry.rocks/), [RethinkDB](https://rethinkdb.com/) and [Starlette](https://www.starlette.io/)
 
 # Why
-As a developer we need to keep sharp buy learning new(old) stuff here and there, by covering almost almost topics like suscriptions on GraphQL
+As a developer we need to keep sharp by learning new(old) stuff here and there, by covering almost topics like subscriptions on GraphQL
 there a plenty tutorial on how to have a GraphQL app (server side at list up and running) but when you try to lean subscriptions and even dataloader
 supports it can be a little bit frustrating.
 So here we have it a pretty good compilation of what you have always needs.
@@ -15,7 +15,7 @@ I have borrowed some project convention from one of my top [Python](https://pyth
 ## Getting Started
 [Strawberry-GraphQL](https://strawberry.rocks/) is pretty awesome with a lot a major framework integration and ideal for big project.
 
-Make it at your ease but the only requirement is Python <= 3.8 and Python > 3.6, we will use [Typing](https://docs.python.org/3/library/typing.html)  and [Typing-Extensions](https://typing-extensions.readthedocs.io/en/latest/) and also because of [RethinkDB](https://rethinkdb.com/) that does not work well with Python>=3.10 some asyncio errors have been encountered so just tick on that for now. After you can add the dependecies from requirements.txt.
+Make it at your ease but the only requirement is Python <= 3.8 and Python > 3.6, we will use [Typing](https://docs.python.org/3/library/typing.html)  and [Typing-Extensions](https://typing-extensions.readthedocs.io/en/latest/) and also because of [RethinkDB](https://rethinkdb.com/) that does not work well with Python>=3.10 some asyncio errors have been encountered so just tick on that for now. After you can add the dependencies from requirements.txt.
 According to the course we will need three models User, Channel and Message. The first approach of creating that like 
 [Strawberry-Schema](https://strawberry.rocks/docs/types/schema)
 ```
@@ -87,7 +87,7 @@ async def init():
 
 ### Minimum Server
 We can use the default [Strawberry-GraphQL](https://strawberry.rocks/) server but as we've programmed to use [Starlette](https://www.starlette.io/)
-let shine amongs the stars should we!?
+let shine among the stars should we!?
 ```
 # server .py
 
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
-We have add CORSMiddleware early because we will use a separated frontend environement so to stay out of troubles...
+We have added CORSMiddleware early because we will use a separated frontend environment so to stay out of troubles...
 
 ### Create  Mutation
 
@@ -178,7 +178,7 @@ class UserMutation:
             conn.close()
 
 ```
-The code is pretty much self explanatory, we just get RethinkDB connection instance, grab incoming GraphQL input data and perform a simple create operation. In case on Bulk insertion the bulk function deal with that.
+The code is pretty much self-explanatory, we just get RethinkDB connection instance, grab incoming GraphQL input data and perform a simple create operation. In case on Bulk insertion the bulk function deal with that.
 
 ### Let take a look of a possible GraphQL Mutation
 First we need to run our server 
@@ -223,7 +223,7 @@ Who should reply with something similar to this
 }
 ```
 The same goes for addChannel mutation in troubles refer to [GraphQL Queries & Mutations](https://graphql.org/learn/queries/)
-Comming from Django we can also implement a get_or_create method like this:
+Coming from Django we can also implement a get_or_create method like this:
 ```
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def get_or_create_channel(self, name: str) -> ChannelType:
@@ -238,8 +238,8 @@ Comming from Django we can also implement a get_or_create method like this:
         change = res.get('changes')[0]['new_val']
         return await make_channel(change)
 ```
-Oh yes the [InputMutationExtension](https://strawberry.rocks/docs/general/mutations) It is usually useful to use a pattern of defining a mutation that receives a single input type argument called input.
-And why those try...finally block? Oh well to avoid task pending warning on console.
+Oh, yes the [InputMutationExtension](https://strawberry.rocks/docs/general/mutations) It is usually useful to use a pattern of defining a mutation that receives a single input type argument called input.
+And why those try...finally block? Oh, well to avoid task pending warning on console.
 
 ### Create  Query
 ```
@@ -307,11 +307,11 @@ class ChannelSubscription:
             await feeds.close()
             print("Connection lost cursor closed")
 ```
-We take avantages on the [RethinkDB](https://rethinkdb.com/) realtimes changes feeds and try to stick with the courses implementations of it but a more pythonista way.
+We take advantages on the [RethinkDB](https://rethinkdb.com/) realtime changes feeds and try to stick with the courses implementations of it but a more pythonista way.
 
 ## RelationShip
-On the course it seem like we only have one to many like relationship so in this part we will try to deal with.
-we can for example use the merge function of [RethinkDB](https://rethinkdb.com/) to make sure that channels and users is always available when someone requested messages but it break the elegant way to do it like GraphQL recommandation. So instead of doing this:
+On the course it seems like we only have one-to-many like relationship so in this part we will try to deal with.
+we can for example use the merge function of [RethinkDB](https://rethinkdb.com/) to make sure that channels and users is always available when someone requested messages, but it breaks the elegant way to do it like GraphQL recommendation. So instead of doing this:
 ```
 # models/messages.py
 
@@ -457,10 +457,10 @@ mutation ADD_MESSAGE($input: AddMessageInput!){
   }
 }
 ```
-But there is a better way to doing that so here come a new chalengers "DataLoader"
+But there is a better way to doing that so here come a new challengers "DataLoader"
 # DataLoader
-It's a major feature that let you save resource and make the server happy. You can read more on that [here](https://github.com/graphql/dataloader) or as we using Strawberry [here](https://strawberry.rocks/docs/guides/dataloaders)
-We have opting for the context version of the DataLoader but it's pretty and so convenient. Let take a look how how we can implement that
+It's a major feature that let you save resource and make the server happy. You can read more on that [here](https://github.com/graphql/dataloader) or as we're using Strawberry [here](https://strawberry.rocks/docs/guides/dataloaders)
+We have opting for the context version of the DataLoader, but it's pretty and so convenient. Let take a look how we can implement that
 ```
 # server.py
 # ...
@@ -641,7 +641,7 @@ And Voila!!!
 - Adding Authentication and Authorization features;
 - Implements the frontend
 
-We will add all thoses sooner. Thank You for your times and happy coding.
+We will add all these sooner. Thank You for your times and happy coding.
 
 
 
