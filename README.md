@@ -636,6 +636,12 @@ class MessageMutation:
         return False
 ```
 And Voila!!!
+# So where to go now?
+- Implements the AbstractCache of Strawberry to use Redis for caching;
+- Adding Authentication and Authorization features;
+- Implements the frontend
+
+We will add all thoses sooner. Thank You for your times and happy coding.
 
 
 
