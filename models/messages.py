@@ -1,18 +1,19 @@
 import datetime
 import json
 from asyncio import run
-from typing import Optional, List
+from typing import Optional, List, Union
+
 import strawberry
 from rethinkdb import r
 from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
 from strawberry.field_extensions import InputMutationExtension
 from strawberry.scalars import JSON
 from strawberry.types import Info
-from typing_extensions import AsyncGenerator, Annotated, TYPE_CHECKING, Union
+from typing_extensions import AsyncGenerator, TYPE_CHECKING, Annotated
 
 from db import get_connection, messageTbl, userTbl, channelTbl
-from models.channels import ChannelType, make_channel
-from models.users import UserType, make_user
+from models.channels import make_channels
+from models.users import make_users
 from utils.wrapper import json_serial
 
 if TYPE_CHECKING:
@@ -31,54 +32,68 @@ class MessageType:
     created_at: Optional[datetime.datetime]
     user_id: Optional[strawberry.ID] = None
     channel_id: Optional[strawberry.ID] = None
-    channels: Optional[List[ChannelType]] = None
-    users: Optional[List[UserType]] = None
     id: Optional[str] = None
 
     @strawberry.field
-    async def channels(self, info: Info, keys: List[strawberry.ID]) -> List[
-        Annotated["ChannelType", strawberry.lazy(".channels")]]:
-        return await info.context['channels_by_message'].load(keys)
+    async def channels(self, info: Info) -> List[Annotated['ChannelType', strawberry.lazy('.channels')]]:
+        return await info.context['channel_loader'].load(self.channel_id)
 
     @strawberry.field
-    async def users(self, info: Info, keys: List[strawberry.ID]) -> List[
-        Annotated["UserType", strawberry.lazy(".users")]]:
-        return await info.context['users_by_message'].loads(keys)
+    async def users(self, info: Info) -> List[Annotated['UserType', strawberry.lazy('.users')]]:
+        return await info.context['user_loader'].load(self.user_id)
+
+
+async def make_default_message(cur) -> MessageType:
+    return MessageType(
+        id=cur.get('id'),
+        text=cur.get('text'),
+        created_at=cur.get('created_at'),
+        user_id=cur.get('user_id'),
+        channel_id=cur.get('channel_id'),
+    )
 
 
 async def make_message(cur) -> MessageType:
     if isinstance(cur, AsyncioCursor):
-        while (await cur.fetch_next()):
-            message = await cur.next()
-            return await make_message(message)
+        try:
+            while (await cur.fetch_next()):
+                message = await cur.next()
+                return await make_message(message)
+        finally:
+            cur.close()
     else:
-        users = [make_user(u) for u in cur.get('users')]
-        channels = [make_channel(c) for c in cur.get('channels')]
         return MessageType(
             id=cur.get('id'),
             text=cur.get('text'),
             created_at=cur.get('created_at'),
             user_id=cur.get('user_id'),
             channel_id=cur.get('channel_id'),
-            channels=channels,
-            users=users
         )
 
 
-async def load_get_message(self, filter: JSON) -> Union[MessageType, ValueError]:
+async def make_messages(cur) -> List[MessageType]:
+    messages: List[MessageType] = []
+    if isinstance(cur, AsyncioCursor):
+        try:
+            while (await cur.fetch_next()):
+                item = await cur.next()
+                messages.append(await make_message(item))
+        finally:
+            cur.close()
+    return messages
+
+
+async def load_messages(keys: List[strawberry.ID]) -> List[Union[MessageType, ValueError]]:
     conn = await get_connection()
-    res = await r.table(messageTbl).filter(filter).limit(1).run(conn)
-    message: MessageType = None
-    while (await res.fetch_next()):
-        msg = await res.next()
-        message = MessageType(
-            id=msg.get('id'),
-            text=msg.get('text'),
-            created_at=msg.get('created_at'),
-            user_id=msg.get('user_id'),
-            channel_id=msg.get('channel_id'),
-        )
-    return await message
+    res = await r.table(messageTbl).filter(lambda msg: r.expr(keys).contains(msg('id'))).run(conn)
+    messages: List[MessageType] = []
+    try:
+        while (await res.fetch_next()):
+            item = await res.next()
+            messages.append(await make_default_message(item))
+    finally:
+        res.close()
+    return messages
 
 
 async def load_messages_by_channel(keys: List[strawberry.ID]) -> List[MessageType]:
@@ -87,28 +102,13 @@ async def load_messages_by_channel(keys: List[strawberry.ID]) -> List[MessageTyp
         lambda doc: r.expr(keys).contains(doc['channel_id'])
     ).run(conn)
     messages: List[MessageType] = []
-    while (await res.fetch_next()):
-        msg = await res.next()
-        messages.append(await make_message(msg))
+    try:
+        while (await res.fetch_next()):
+            msg = await res.next()
+            messages.append(await make_message(msg))
+    finally:
+        res.close()
     return messages
-
-
-async def prefetch_related(msg):
-    conn = await get_connection()
-    if isinstance(msg, str):
-        res = await r.table(messageTbl).get(msg).merge(lambda message: {
-            "users": r.table(userTbl).get_all(message['user_id']).coerce_to('ARRAY'),
-            "channels": r.table(channelTbl).get_all(message['channel_id']).coerce_to('ARRAY')
-        }).run(conn)
-
-        return res
-
-
-def sync_prefetch_related(msg):
-    return {
-        "users": r.table(userTbl).get_all(msg['user_id']).coerce_to('ARRAY'),
-        "channels": r.table(channelTbl).get_all(msg['channel_id']).coerce_to('ARRAY')
-    }
 
 
 @strawberry.type
@@ -123,16 +123,7 @@ class MessageMutation:
             'created_at': r.now(),
         }
         res = await r.table(messageTbl).insert(message).run(conn)
-        item = await prefetch_related(res['generated_keys'][0])
-        return MessageType(
-            users=item.get('users'),
-            channels=item.get('channels'),
-            user_id=item.get('user_id'),
-            channel_id=item.get('channel_id'),
-            id=item.get('id'),
-            created_at=item.get('created_at'),
-            text=item.get('text')
-        )
+        return await make_message(res)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def update_message(self, id: strawberry.ID, user_id: strawberry.ID, channel_id: strawberry.ID,
@@ -144,9 +135,7 @@ class MessageMutation:
             'text': text
         }
         filter = {'id': id}
-        res = await r.table(messageTbl).get(filter).update(message, return_changes=True).merge(
-            lambda msg: run(prefetch_related(msg))
-        ).run(conn)
+        res = await r.table(messageTbl).get(filter).update(message, return_changes=True).run(conn)
 
         if res.get('unchanged') == 0:
             new_val = res.get('changes')[0]['new_val']
@@ -168,12 +157,14 @@ class MessageMutation:
 class MessageQuery:
     @strawberry.field
     async def get_message(self, info: Info, filter: JSON) -> MessageType:
-       return await info.context['message_loader'].load(filter)
+        conn = await get_connection()
+        res = await r.table(messageTbl).filter(filter).limit(1).run(conn)
+        message = await make_message(res)
+        return message
 
     @strawberry.field
     async def all_messages(self, info: Info, filter: Optional[JSON] = None, page: Optional[int] = None,
                            limit: Optional[int] = None) -> List[MessageType]:
-        messages: List[MessageType] = []
         conn = await get_connection()
         if filter is None:
             filter = {}
@@ -181,21 +172,8 @@ class MessageQuery:
             page = 0
         if limit is None:
             limit = 12
-        # res = await r.table(messageTbl).filter(filter).limit(limit).skip(page).merge(
-        #     lambda msg: sync_prefetch_related(msg)
-        # ).run(conn)
         res = await r.table(messageTbl).filter(filter).limit(limit).skip(page).run(conn)
-        while (await res.fetch_next()):
-            item = await res.next()
-            msg = MessageType(
-                id=item.get('id'),
-                text=item.get('text'),
-                created_at=item.get('created_at'),
-                user_id=item.get('user_id'),
-                channel_id=item.get('channel_id'),
-            )
-
-            messages.append(msg)
+        messages = await make_messages(res)
         return messages
 
 
@@ -215,3 +193,5 @@ class MessageSubscription:
         except GeneratorExit:
             await feeds.close()
             print("Connection lost cursor closed")
+        finally:
+            feeds.close()

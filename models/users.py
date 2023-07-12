@@ -1,6 +1,6 @@
 import datetime
 import json
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Iterable
 import strawberry
 from rethinkdb import r
 from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
@@ -25,7 +25,14 @@ class UserType:
     id: Optional[str] = None
 
 
-def make_user(cur) -> UserType:
+async def make_user(cur) -> UserType:
+    if isinstance(cur, AsyncioCursor):
+        try:
+            while (await cur.fetch_next()):
+                user = await cur.next()
+                return await make_user(user)
+        finally:
+            cur.close()
     return UserType(
         id=cur.get('id'),
         username=cur.get('username'),
@@ -33,15 +40,28 @@ def make_user(cur) -> UserType:
     )
 
 
-async def load_users(keys: List[strawberry.ID]) -> List[Union[UserType, ValueError]]:
-    async def lookup(key: strawberry.ID) -> Union[UserType, ValueError]:
-        conn = await get_connection()
-        res = await r.table(userTbl).get(key).run(conn)
-        if res.get('id', None) is not None:
-            return make_user(res)
-        return ValueError("user does not exists")
+async def make_users(cur) -> List[UserType]:
+    users: List[UserType] = []
+    if isinstance(cur, AsyncioCursor):
+        try:
+            while (await cur.fetch_next()):
+                user = await cur.next()
+                users.append(await make_user(user))
+        finally:
+            cur.close()
+    if isinstance(cur, list):
+        users = [await make_user(u) for u in cur]
+    return users
 
-    return [await lookup(key) for key in keys]
+
+async def load_users(keys: List[strawberry.ID]) -> Iterable[List[UserType]]:
+    conn = await get_connection()
+    cur = await r.table(userTbl).get_all(r.args(keys)).run(conn)
+    users = await make_users(cur)
+    groups = {k: [] for k in keys}
+    for u in users:
+        groups[u.id].append(u)
+    return groups.values()
 
 
 async def load_users_by_message(keys: List[strawberry.ID]) -> List[Union[UserType, ValueError]]:
@@ -52,8 +72,9 @@ async def load_users_by_message(keys: List[strawberry.ID]) -> List[Union[UserTyp
     users: List[UserType] = []
     while (await res.fetch_next()):
         usr = await res.next()
-        users.append(make_user(usr))
+        users.append(await make_user(usr))
     return users
+
 
 @strawberry.type
 class UserMutation:
@@ -64,13 +85,9 @@ class UserMutation:
             'username': username
         }
         cur = await r.table(userTbl).filter(user).limit(1).run(conn)
-        if isinstance(cur, AsyncioCursor):
-            while (await cur.fetch_next()):
-                item = await cur.next()
-                if item.get('id', None) is not None:
-                    return make_user(item)
-                break
-
+        user = await make_user(cur)
+        if user.get('id', None) is not None:
+            return user
         return await self.add_user(username)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
@@ -82,22 +99,19 @@ class UserMutation:
         }
         res = await r.table(userTbl).insert(user, return_changes=True).run(conn)
         change = res.get('changes')[0]['new_val']
-        return make_user(change)
+        return await make_user(change)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def update_channel(self, pk: strawberry.ID, username: str) -> UserType:
-        query = {
-            'id': pk,
-        }
-        update = {
-            'username': username
-        }
+        query = {'id': pk}
+        update = {'username': username}
+
         conn = await get_connection()
         res = await r.table(userTbl).filter(query).update(update, return_changes=True).run(conn)
         if res.get('unchanged') == 0:
             new_val = res.get('changes')[0]['new_val']
-            return make_user(new_val)
-        return UserType()
+            return await make_user(new_val)
+        return await make_user(res)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def delete_channel(self, pk: strawberry.ID) -> bool:
@@ -108,19 +122,13 @@ class UserMutation:
         return False
 
 
-async def make_users(res) -> List[UserType]:
-    users: List[UserType] = []
-    while (await res.fetch_next()):
-        user = await res.next()
-        users.append(make_user(user))
-    return users
-
-
 @strawberry.type
 class UserQuery:
     @strawberry.field
-    async def get_user(self, info: Info, id: strawberry.ID) -> UserType:
-        return await info.context["user_loader"].load(id)
+    async def get_user(self, info: Info, filter: JSON) -> UserType:
+        conn = await get_connection()
+        res = await r.table(userTbl).filter(filter).limit(1).run(conn)
+        return await make_user(res)
 
     @strawberry.field
     async def all_users(self, filter: Optional[JSON] = None, page: Optional[int] = None,

@@ -1,6 +1,6 @@
 import datetime
 import json
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Iterable
 import strawberry
 from rethinkdb import r
 from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
@@ -28,8 +28,15 @@ class ChannelType:
     id: Optional[str] = None
 
 
-def make_channel(cur) -> ChannelType:
-    if cur is not None:
+async def make_channel(cur) -> ChannelType:
+    if isinstance(cur, AsyncioCursor):
+        try:
+            while (await cur.fetch_next()):
+                channel = await cur.next()
+                return await make_channel(channel)
+        finally:
+            cur.close()
+    else:
         return ChannelType(
             id=cur.get('id'),
             name=cur.get('name'),
@@ -39,21 +46,26 @@ def make_channel(cur) -> ChannelType:
 
 async def make_channels(res) -> List[ChannelType]:
     channels: List[ChannelType] = []
-    while (await res.fetch_next()):
-        channel = await res.next()
-        channels.append(make_channel(channel))
+    if isinstance(res, AsyncioCursor):
+        try:
+            while (await res.fetch_next()):
+                channel = await res.next()
+                channels.append(await make_channel(channel))
+        finally:
+            res.close()
+    if isinstance(res, list):
+        channels = [await make_channel(c) for c in res]
     return channels
 
 
-async def load_channels(keys: List[strawberry.ID]) -> List[Union[ChannelType, ValueError]]:
-    async def lookup(key: strawberry.ID) -> Union[ChannelType, ValueError]:
-        conn = await get_connection()
-        res = await r.table(channelTbl).get(key).run(conn)
-        if res.get('id', None) is not None:
-            return make_channel(res)
-        return ValueError("channel does not exists")
-
-    return [await lookup(key) for key in keys]
+async def load_channels(keys: List[strawberry.ID]) -> Iterable[List[ChannelType]]:
+    conn = await get_connection()
+    cur = await r.table(channelTbl).get_all(r.args(keys)).run(conn)
+    users = await make_channels(cur)
+    groups = {k: [] for k in keys}
+    for u in users:
+        groups[u.id].append(u)
+    return groups.values()
 
 
 async def load_channels_by_message(keys: List[strawberry.ID]) -> List[Union[ChannelType, ValueError]]:
@@ -79,12 +91,12 @@ class ChannelMutation:
             while (await cur.fetch_next()):
                 item = await cur.next()
                 if item.get('id', None) is not None:
-                    return make_channel(item)
+                    return await make_channel(item)
                 break
 
         res = await r.table(channelTbl).insert(channel, return_changes=True).run(conn)
         change = res.get('changes')[0]['new_val']
-        return make_channel(change)
+        return await make_channel(change)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def add_channel(self, name: str) -> ChannelType:
@@ -95,7 +107,7 @@ class ChannelMutation:
         }
         res = await r.table(channelTbl).insert(channel, return_changes=True).run(conn)
         change = res.get('changes')[0]['new_val']
-        return make_channel(change)
+        return await make_channel(change)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def update_channel(self, pk: strawberry.ID, name: str) -> ChannelType:
@@ -109,8 +121,8 @@ class ChannelMutation:
         res = await r.table(channelTbl).filter(query).update(update, return_changes=True).run(conn)
         if res.get('unchanged') == 0:
             new_val = res.get('changes')[0]['new_val']
-            return make_channel(new_val)
-        return ChannelType()
+            return await make_channel(new_val)
+        return await make_channel(res)
 
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def delete_channel(self, pk: strawberry.ID) -> bool:
@@ -126,8 +138,8 @@ class ChannelQuery:
     @strawberry.field
     async def get_channel(self, filter: JSON) -> ChannelType:
         conn = await get_connection()
-        res = await r.table(channelTbl).get(filter).run(conn)
-        return make_channel(res)
+        res = await r.table(channelTbl).filter(filter).run(conn)
+        return await make_channel(res)
 
     @strawberry.field
     async def all_channels(self, filter: Optional[JSON] = None, page: Optional[int] = None,
