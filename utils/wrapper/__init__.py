@@ -1,6 +1,5 @@
 from datetime import date, datetime
 
-
 def run_once(f):
     def wrapper(*args, **kwargs):
         if not wrapper.has_run:

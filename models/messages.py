@@ -10,7 +10,7 @@ from strawberry.scalars import JSON
 from strawberry.types import Info
 from typing_extensions import AsyncGenerator, TYPE_CHECKING, Annotated
 
-from db import get_connection, messageTbl, userTbl
+from db import get_connection, messageTbl
 from utils.wrapper import json_serial
 
 if TYPE_CHECKING:

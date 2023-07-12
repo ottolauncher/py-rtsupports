@@ -142,7 +142,6 @@ class ChannelQuery:
         finally:
             res.close()
 
-
     @strawberry.field
     async def all_channels(self, filter: Optional[JSON] = None, page: Optional[int] = None,
                            limit: Optional[int] = None) -> List[ChannelType]:

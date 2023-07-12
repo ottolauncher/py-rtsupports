@@ -31,7 +31,6 @@ class MyGraphQL(GraphQL):
             'user_messages_loader': DataLoader(load_fn=load_messages_by_user),
         }
 
-
 graphql_app = MyGraphQL(schema=schema)
 
 routes = [

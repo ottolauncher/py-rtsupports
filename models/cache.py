@@ -53,7 +53,6 @@ class UserCache(AbstractCache):
     def clear(self) -> None:
         clear_ns(self.ns)
 
-
 class ChannelCache(AbstractCache):
     ns = 'rtsupports:channels'
 

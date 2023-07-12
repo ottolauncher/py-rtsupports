@@ -25,5 +25,3 @@ async def init():
 
     except ReqlOpFailedError:
         pass
-
-
