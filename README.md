@@ -1,6 +1,6 @@
 # py-rtsupports
 The application has been implemented by following the Udemy course  by  [Build Realtime Apps](https://www.udemy.com/course/realtime-apps-with-reactjs-golang-rethinkdb/) @knowthen
-but this using [Strawberry-GraphQL](https://strawberry.rocks/), [RethinkDB](https://rethinkdb.com/) and [Starlette](https://www.starlette.io/)
+but this time using [Strawberry-GraphQL](https://strawberry.rocks/), [RethinkDB](https://rethinkdb.com/) and [Starlette](https://www.starlette.io/)
 
 # Why
 As a developer we need to keep sharp by learning new(old) stuff here and there, by covering almost topics like subscriptions on GraphQL
