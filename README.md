@@ -16,7 +16,8 @@ I have borrowed some project convention from one of my top [Python](https://pyth
 [Strawberry-GraphQL](https://strawberry.rocks/) is pretty awesome with a lot a major framework integration and ideal for big project.
 
 Make it at your ease but the only requirement is Python <= 3.8 and Python > 3.6, we will use [Typing](https://docs.python.org/3/library/typing.html)  and [Typing-Extensions](https://typing-extensions.readthedocs.io/en/latest/) and also because of [RethinkDB](https://rethinkdb.com/) that does not work well with Python>=3.10 some asyncio errors have been encountered so just tick on that for now. After you can add the dependecies from requirements.txt.
-According to the course we will need three models User, Channel and Message. The first approach of creating that like [Strawberry-Schema](https://strawberry.rocks/docs/types/schema)https://strawberry.rocks/docs/types/schema)
+According to the course we will need three models User, Channel and Message. The first approach of creating that like 
+[Strawberry-Schema](https://strawberry.rocks/docs/types/schema)
 ```
 # models/channels.py
 ############################################################
@@ -80,7 +81,86 @@ async def init():
         r.table_create(messageTbl).run(conn)
 
     except ReqlOpFailedError:
+        # handle error here
         pass
+```
+
+### Minimum Server
+We can use the default [Strawberry-GraphQL](https://strawberry.rocks/) server but as we've programmed to use [Starlette](https://www.starlette.io/)
+let shine amongs the stars should we!?
+```
+# server .py
+
+class MyGraphQL(GraphQL):
+    # It will be use in future when we will added Dataloader
+    pass
+
+
+graphql_app = MyGraphQL(schema=schema)
+
+outes = [
+    Route("/graphql", graphql_app),
+    WebSocketRoute("/graphql", graphql_app),
+]
+
+middlewares = [
+    Middleware(
+        CORSMiddleware, allow_origins=[
+            'http://localhost:8000', 'http://localhost:5173', '127.0.0.1',
+        ],
+        allow_credentials=True,
+        allow_headers=['*'],
+        allow_methods=['*'],
+    )
+]
+app = Starlette(debug=settings.DEBUG, routes=routes, middleware=middlewares)
+
+async def main():
+    run_once(init)
+    config = uvicorn.Config("server:app", port=8000, lifespan="auto")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+We have add CORSMiddleware early because we will use a separated frontend environement so to stay out of troubles...
+
+### Create our first Mutation
+
+```
+# models/users.py
+# ....
+
+# Some code refactoring to avoid repeating
+async def make_user(cur) -> UserType:
+    if isinstance(cur, AsyncioCursor):
+        try:
+            while (await cur.fetch_next()):
+                user = await cur.next()
+                return await make_user(user)
+        finally:
+            cur.close()
+    return UserType(
+        id=cur.get('id'),
+        username=cur.get('username'),
+        created_at=cur.get('created_at')
+    )
+
+@strawberry.type
+class UserMutation:
+     @strawberry.mutation(extensions=[InputMutationExtension()])
+     async def add_user(self, username: str) -> UserType:
+            conn = await get_connection()
+            user = {
+                'username': username,
+                'created_at': r.now()
+            }
+            res = await r.table(userTbl).insert(user, return_changes=True).run(conn)
+            change = res.get('changes')[0]['new_val']
+            return await make_user(change)
 ```
 
 
