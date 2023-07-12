@@ -1,14 +1,16 @@
 import datetime
 import json
-from typing import Optional, List, Union, Iterable
+from typing import Optional, List, Iterable
+
 import strawberry
 from rethinkdb import r
 from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
 from strawberry.field_extensions import InputMutationExtension
 from strawberry.scalars import JSON
+from strawberry.types import Info
 from typing_extensions import AsyncGenerator, Annotated, TYPE_CHECKING
 
-from db import get_connection, channelTbl, messageTbl
+from db import get_connection, channelTbl
 from utils.wrapper import json_serial
 
 if TYPE_CHECKING:
@@ -24,8 +26,11 @@ class ChannelChangeType:
 class ChannelType:
     name: str
     created_at: Optional[datetime.datetime]
-    messages: Optional[Annotated["MessageType", strawberry.lazy(".messages")]] = None
     id: Optional[str] = None
+
+    @strawberry.field
+    async def messages(self, info: Info) -> List[Annotated['MessageType', strawberry.lazy('.messages')]]:
+        return await info.context['channel_messages_loader'].load(self.id)
 
 
 async def make_channel(cur) -> ChannelType:
@@ -61,21 +66,14 @@ async def make_channels(res) -> List[ChannelType]:
 async def load_channels(keys: List[strawberry.ID]) -> Iterable[List[ChannelType]]:
     conn = await get_connection()
     cur = await r.table(channelTbl).get_all(r.args(keys)).run(conn)
-    users = await make_channels(cur)
-    groups = {k: [] for k in keys}
-    for u in users:
-        groups[u.id].append(u)
-    return groups.values()
-
-
-async def load_channels_by_message(keys: List[strawberry.ID]) -> List[Union[ChannelType, ValueError]]:
-    conn = await get_connection()
-    res = await r.table(channelTbl).filter(
-        lambda chan: r.expr(keys).contains(chan['id'])).merge(lambda chan: {
-        "messages": r.table(messageTbl).filter({'channel_id': chan['id']})
-    }).run(conn)
-    channels = await make_channels(res)
-    return channels
+    try:
+        users = await make_channels(cur)
+        groups = {k: [] for k in keys}
+        for u in users:
+            groups[u.id].append(u)
+        return groups.values()
+    finally:
+        cur.close()
 
 
 @strawberry.type
@@ -139,7 +137,11 @@ class ChannelQuery:
     async def get_channel(self, filter: JSON) -> ChannelType:
         conn = await get_connection()
         res = await r.table(channelTbl).filter(filter).run(conn)
-        return await make_channel(res)
+        try:
+            return await make_channel(res)
+        finally:
+            res.close()
+
 
     @strawberry.field
     async def all_channels(self, filter: Optional[JSON] = None, page: Optional[int] = None,
@@ -153,8 +155,11 @@ class ChannelQuery:
         if limit is None:
             limit = 12
         res = await r.table(channelTbl).filter(filter).limit(limit).skip(page).run(conn)
-        channels = await make_channels(res)
-        return channels
+        try:
+            channels = await make_channels(res)
+            return channels
+        finally:
+            res.close()
 
 
 @strawberry.type

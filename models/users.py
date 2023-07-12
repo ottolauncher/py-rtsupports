@@ -1,16 +1,20 @@
 import datetime
 import json
-from typing import Optional, List, Union, Iterable
+from typing import Optional, List, Iterable
+
 import strawberry
 from rethinkdb import r
 from rethinkdb.asyncio_net.net_asyncio import AsyncioCursor
 from strawberry.field_extensions import InputMutationExtension
 from strawberry.scalars import JSON
 from strawberry.types import Info
-from typing_extensions import AsyncGenerator
+from typing_extensions import AsyncGenerator, Annotated, TYPE_CHECKING
 
-from db import get_connection, userTbl, messageTbl
+from db import get_connection, userTbl
 from utils.wrapper import json_serial
+
+if TYPE_CHECKING:
+    from .messages import MessageType
 
 
 @strawberry.type
@@ -23,6 +27,10 @@ class UserType:
     username: str
     created_at: Optional[datetime.datetime]
     id: Optional[str] = None
+
+    @strawberry.field
+    async def messages(self, info: Info) -> List[Annotated['MessageType', strawberry.lazy('.messages')]]:
+        return await info.context['user_messages_loader'].load(self.id)
 
 
 async def make_user(cur) -> UserType:
@@ -57,23 +65,14 @@ async def make_users(cur) -> List[UserType]:
 async def load_users(keys: List[strawberry.ID]) -> Iterable[List[UserType]]:
     conn = await get_connection()
     cur = await r.table(userTbl).get_all(r.args(keys)).run(conn)
-    users = await make_users(cur)
-    groups = {k: [] for k in keys}
-    for u in users:
-        groups[u.id].append(u)
-    return groups.values()
-
-
-async def load_users_by_message(keys: List[strawberry.ID]) -> List[Union[UserType, ValueError]]:
-    conn = await get_connection()
-    res = await r.table(messageTbl).filter(
-        lambda doc: r.expr(keys).contains(doc['user_id'])
-    ).run(conn)
-    users: List[UserType] = []
-    while (await res.fetch_next()):
-        usr = await res.next()
-        users.append(await make_user(usr))
-    return users
+    try:
+        users = await make_users(cur)
+        groups = {k: [] for k in keys}
+        for u in users:
+            groups[u.id].append(u)
+        return groups.values()
+    finally:
+        cur.close()
 
 
 @strawberry.type
@@ -128,7 +127,10 @@ class UserQuery:
     async def get_user(self, info: Info, filter: JSON) -> UserType:
         conn = await get_connection()
         res = await r.table(userTbl).filter(filter).limit(1).run(conn)
-        return await make_user(res)
+        try:
+            return await make_user(res)
+        finally:
+            res.close()
 
     @strawberry.field
     async def all_users(self, filter: Optional[JSON] = None, page: Optional[int] = None,
@@ -141,8 +143,11 @@ class UserQuery:
         if limit is None:
             limit = 12
         res = await r.table(userTbl).filter(filter).limit(limit).skip(page).run(conn)
-        users = await make_users(res)
-        return users
+        try:
+            users = await make_users(res)
+            return users
+        finally:
+            res.close()
 
 
 @strawberry.type

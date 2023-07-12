@@ -1,7 +1,6 @@
 import datetime
 import json
-from asyncio import run
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Iterable
 
 import strawberry
 from rethinkdb import r
@@ -11,9 +10,7 @@ from strawberry.scalars import JSON
 from strawberry.types import Info
 from typing_extensions import AsyncGenerator, TYPE_CHECKING, Annotated
 
-from db import get_connection, messageTbl, userTbl, channelTbl
-from models.channels import make_channels
-from models.users import make_users
+from db import get_connection, messageTbl, userTbl
 from utils.wrapper import json_serial
 
 if TYPE_CHECKING:
@@ -28,10 +25,10 @@ class MessageChangesType:
 
 @strawberry.type
 class MessageType:
-    text: str
     created_at: Optional[datetime.datetime]
     user_id: Optional[strawberry.ID] = None
     channel_id: Optional[strawberry.ID] = None
+    text: Optional[str] = None
     id: Optional[str] = None
 
     @strawberry.field
@@ -85,7 +82,9 @@ async def make_messages(cur) -> List[MessageType]:
 
 async def load_messages(keys: List[strawberry.ID]) -> List[Union[MessageType, ValueError]]:
     conn = await get_connection()
-    res = await r.table(messageTbl).filter(lambda msg: r.expr(keys).contains(msg('id'))).run(conn)
+    res = await r.table(messageTbl).filter(
+        lambda msg: r.expr(keys).contains(msg('id'))
+    ).limit(len(keys)).run(conn)
     messages: List[MessageType] = []
     try:
         while (await res.fetch_next()):
@@ -96,19 +95,35 @@ async def load_messages(keys: List[strawberry.ID]) -> List[Union[MessageType, Va
     return messages
 
 
-async def load_messages_by_channel(keys: List[strawberry.ID]) -> List[MessageType]:
+async def load_messages_by_channel(keys: List[strawberry.ID]) -> Iterable[List[MessageType]]:
     conn = await get_connection()
     res = await r.table(messageTbl).filter(
         lambda doc: r.expr(keys).contains(doc['channel_id'])
-    ).run(conn)
-    messages: List[MessageType] = []
+    ).limit(len(keys)).run(conn)
     try:
-        while (await res.fetch_next()):
-            msg = await res.next()
-            messages.append(await make_message(msg))
+        messages = await make_messages(res)
+        groups = {k: [] for k in keys}
+        for m in messages:
+            groups[m.channel_id].append(m)
+        return groups.values()
     finally:
         res.close()
-    return messages
+
+
+async def load_messages_by_user(keys: List[strawberry.ID]) -> Iterable[List[MessageType]]:
+    conn = await get_connection()
+    res = await r.table(messageTbl).filter(
+        lambda doc: r.expr(keys).contains(doc['user_id'])
+    ).limit(len(keys)).run(conn)
+    try:
+        messages = await make_messages(res)
+        groups = {k: [] for k in keys}
+        for m in messages:
+            groups[m.user_id].append(m)
+        return groups.values()
+
+    finally:
+        res.close()
 
 
 @strawberry.type
@@ -159,8 +174,11 @@ class MessageQuery:
     async def get_message(self, info: Info, filter: JSON) -> MessageType:
         conn = await get_connection()
         res = await r.table(messageTbl).filter(filter).limit(1).run(conn)
-        message = await make_message(res)
-        return message
+        try:
+            message = await make_message(res)
+            return message
+        finally:
+            res.close()
 
     @strawberry.field
     async def all_messages(self, info: Info, filter: Optional[JSON] = None, page: Optional[int] = None,
@@ -173,8 +191,11 @@ class MessageQuery:
         if limit is None:
             limit = 12
         res = await r.table(messageTbl).filter(filter).limit(limit).skip(page).run(conn)
-        messages = await make_messages(res)
-        return messages
+        try:
+            messages = await make_messages(res)
+            return messages
+        finally:
+            res.close()
 
 
 @strawberry.type
@@ -191,7 +212,7 @@ class MessageSubscription:
                 changes = MessageChangesType(changes=dumps)
                 yield changes
         except GeneratorExit:
-            await feeds.close()
+            await conn.close()
             print("Connection lost cursor closed")
         finally:
             feeds.close()
