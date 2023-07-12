@@ -1,6 +1,6 @@
 import datetime
 import json
-from typing import Optional, List, Iterable
+from typing import Optional, List, Iterable, Any
 
 import strawberry
 from rethinkdb import r
@@ -76,8 +76,23 @@ async def load_channels(keys: List[strawberry.ID]) -> Iterable[List[ChannelType]
         cur.close()
 
 
+def pluck(lst, key) -> List[Any]:
+    return [x.get(key) for x in lst]
+
+
 @strawberry.type
 class ChannelMutation:
+    @strawberry.mutation
+    async def bulk_channel(self, names: List[str]) -> List[ChannelType]:
+        conn = await get_connection()
+        channels = [{"name": name} for name in names]
+        try:
+            cur = await r.table(channelTbl).insert(channels, return_changes=True).run(conn)
+            changes = pluck(cur.get('changes'), 'new_val')
+            return await make_channels(changes)
+        finally:
+            conn.close()
+
     @strawberry.mutation(extensions=[InputMutationExtension()])
     async def get_or_create_channel(self, name: str) -> ChannelType:
         conn = await get_connection()
@@ -86,12 +101,7 @@ class ChannelMutation:
         }
         cur = await r.table(channelTbl).filter(channel).limit(1).run(conn)
         if isinstance(cur, AsyncioCursor):
-            while (await cur.fetch_next()):
-                item = await cur.next()
-                if item.get('id', None) is not None:
-                    return await make_channel(item)
-                break
-
+            return await make_channel(cur)
         res = await r.table(channelTbl).insert(channel, return_changes=True).run(conn)
         change = res.get('changes')[0]['new_val']
         return await make_channel(change)
